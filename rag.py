@@ -5,7 +5,8 @@ from pypdf import PdfReader
 from docx import Document
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import (Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, FilterSelector, PayloadSchemaType
+)
 from groq import Groq
 
 load_dotenv()
@@ -32,6 +33,10 @@ def create_collection():
                   ),
             )
 
+      collection = qdrant.get_collection(COLLECTION)
+      if "session_id" not in (collection.payload_schema or {}):
+            qdrant.create_payload_index(COLLECTION, "session_id", PayloadSchemaType.KEYWORD)
+
 
 create_collection()
 
@@ -57,8 +62,12 @@ def split_into_chunks(text):
             start += CHUNK_SIZE - CHUNK_OVERLAP
       return chunks
 
+
+def session_filter(session_id):
+      return Filter(must=[FieldCondition(key="session_id", match=MatchValue(value=session_id))])
+
 # Embed the chunks and store them in Qdrant
-def add_document(file):
+def add_document(file, session_id):
       text = load_text(file)
       chunks = split_into_chunks(text)
 
@@ -73,9 +82,9 @@ def add_document(file):
 
             points.append(
                   PointStruct(
-                        id=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file.name}-{i}")),
+                        id=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{session_id}-{file.name}-{i}")),
                         vector = vector.tolist(),
-                        payload = {"text": chunk, "source": file.name, "chunk_index": i},
+                        payload = {"text": chunk, "source": file.name, "chunk_index": i, "session_id": session_id},
                   )
             )
 
@@ -83,19 +92,20 @@ def add_document(file):
       return len(chunks)
 
 # Retrieve the best chunks for a question
-def retrieve(question):
+def retrieve(question, session_id):
       query_vector = embedder.encode(question).tolist()
 
       result = qdrant.query_points(
             collection_name=COLLECTION,
             query=query_vector,
+            query_filter=session_filter(session_id),
             limit=TOP_K,
       )
       return result.points
 
 # Build the prompt and ask groq
-def answer_question(question):
-      points = retrieve(question)
+def answer_question(question, session_id):
+      points = retrieve(question, session_id)
 
       if not points:
             return "Please upload a document first", []
@@ -126,7 +136,14 @@ def answer_question(question):
       return response.choices[0].message.content, points
 
 
-def has_documents():
+def has_documents(session_id):
     if not qdrant.collection_exists(COLLECTION):
           create_collection()
-    return qdrant.count(collection_name=COLLECTION).count > 0
+    return qdrant.count(collection_name=COLLECTION, count_filter=session_filter(session_id)).count > 0
+
+
+def clear_my_data(session_id):
+      qdrant.delete(
+        collection_name=COLLECTION,
+        points_selector=FilterSelector(filter=session_filter(session_id)),
+      )

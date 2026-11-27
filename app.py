@@ -1,7 +1,13 @@
 import streamlit as st
-from rag import add_document, answer_question, has_documents
+from rag import add_document, answer_question, clear_my_data, has_documents
 
 st.title("Chat with your documents")
+
+import uuid
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+session_id = st.session_state.session_id
 
 # session_state keeps values between reruns (Streamlit reruns the file on every click)
 if "messages" not in st.session_state:
@@ -9,18 +15,25 @@ if "messages" not in st.session_state:
 if "indexed" not in st.session_state:
     st.session_state.indexed = []
 
+
+if st.button("Delete My data"):
+    clear_my_data(session_id)
+    st.session_state.indexed = []
+    st.session_state.messages = []
+    st.rerun()
+
 with st.sidebar:
     uploaded = st.file_uploader("Upload a PDF or DOCX", type=["pdf", "docx"])
     if uploaded and uploaded.name not in st.session_state.indexed:
         with st.spinner("Reading and indexing the file..."):
-            count = add_document(uploaded)
+            count = add_document(uploaded, session_id)
         st.session_state.indexed.append(uploaded.name)
         if count == 0:
             st.error("No text found in this file.")
         else:
             st.success(f"Indexed {count} chunks")
 
-if not has_documents():
+if not has_documents(session_id):
     st.info("Please upload a PDF or DOCX file from the sidebar to start chatting.")
     st.stop()
 
@@ -38,7 +51,7 @@ if question:
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            answer, sources = answer_question(question)
+            answer, sources = answer_question(question, session_id)
         st.write(answer)
         with st.expander("Sources"):
             for s in sources:
