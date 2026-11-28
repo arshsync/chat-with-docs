@@ -46,9 +46,19 @@ def load_text(file):
       if name.endswith(".pdf"):
             reader = PdfReader(file)
             return "\n".join(page.extract_text() or "" for page in reader.pages)
+      
       if name.endswith(".docx"):
             doc = Document(file)
-            return "\n".join(p.text for p in doc.paragraphs)
+            content = [p.text for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                  table_md = []
+                  for i, row in enumerate(table.rows):
+                        cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                        table_md.append("| " + " | ".join(cells) + " |")
+                        if i == 0:
+                              table_md.append("| "+ " | ".join(["---"] * len(cells)) + " |")
+                  content.append("\n".join(table_md))
+            return "\n\n".join(content)
       raise ValueError("Only pdf and DOCX files are supported.")
 
 # Split the text into chunks
